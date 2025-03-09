@@ -5,62 +5,60 @@ const WeatherAlerts = () => {
   const [subscribedTopics, setSubscribedTopics] = useState([]);
   const [alert, setAlert] = useState('');
   const [fireNews, setFireNews] = useState([]);
-  const [location, setLocation] = useState('California'); // Default location
-
   const topics = ['California', 'Florida', 'Washington']; // Available topics (States)
-  const [ws, setWs] = useState(null);
 
   useEffect(() => {
-    let isMounted = true;  // Add the isMounted flag
-    const socket = new WebSocket('ws://localhost:3001');
-    setWs(socket);
+    let isMounted = true;
+    const socket = new WebSocket(process.env.REACT_APP_WEBSOCKET_URL || "ws://localhost:5000");
 
-    socket.onopen = () => {
-      console.log('Connected to WebSocket server');
-    };
-
+    socket.onopen = () => console.log('Connected to WebSocket server');
+    
     socket.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      console.log('Received data:', data);
-      // Handle different data types (Weather Alerts, Fire News, etc.)
-      if (data.event && isMounted) {
-        setAlert(data.event);
-      } else if (isMounted) {
-        setFireNews((prevNews) => [...prevNews, data]);
+      if (!isMounted) return;
+      
+      try {
+        const data = JSON.parse(event.data);
+        console.log('Received data:', data);
+
+        if (data.event) {
+          setAlert(data.event);
+        } else {
+          setFireNews(prevNews => [...prevNews, data]);
+        }
+      } catch (error) {
+        console.error("Error parsing WebSocket message:", error);
       }
     };
 
-    socket.onerror = (error) => {
-      console.error('WebSocket Error:', error);
-    };
-
-    socket.onclose = () => {
-      console.log('WebSocket connection closed');
-    };
+    socket.onerror = (error) => console.error('WebSocket Error:', error);
+    
+    socket.onclose = () => console.log('WebSocket connection closed');
 
     return () => {
-      isMounted = false;  // Set isMounted to false on cleanup
+      isMounted = false;
       socket.close();
     };
-}, []);
+  }, []);
 
-
-    const subscribeToTopic = (topic) => {
+  const subscribeToTopic = (topic) => {
     if (!subscribedTopics.includes(topic)) {
-      setSubscribedTopics((prev) => [...prev, topic]);
+      setSubscribedTopics(prev => [...prev, topic]);
       console.log(`Subscribed to ${topic} alerts`);
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ subscribe: topic }));
-      }
+
+      // Send subscription request over WebSocket
+      const socket = new WebSocket(process.env.REACT_APP_WEBSOCKET_URL || "ws://localhost:5000");
+      socket.onopen = () => {
+        socket.send(JSON.stringify({ subscribe: true, location: topic }));
+      };
+      socket.onerror = (error) => console.error("WebSocket Error:", error);
     } else {
       console.log(`Already subscribed to ${topic} alerts`);
     }
   };
-  
 
   return (
     <div className="weather-alerts">
-      <h1>Disater News</h1>
+      <h1>Disaster News</h1>
       <div className="subscription">
         <h2>Subscribe to location</h2>
         {topics.map((topic) => (

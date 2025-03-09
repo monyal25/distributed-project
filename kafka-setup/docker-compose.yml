@@ -1,37 +1,74 @@
-version: '3'
+version: "3.8"
 
 services:
   zookeeper:
-    image: bitnami/zookeeper:latest
-    environment:
-      ZOOKEEPER_SERVER_ID: 1
-      ZOOKEEPER_LISTENER_PORT: 2182
-      ZOOKEEPER_TICK_TIME: 2000
+    image: wurstmeister/zookeeper
+    container_name: zookeeper
+    platform: linux/amd64
     ports:
-      - "2182:2182"
-    networks:
-      - kafka_network
+      - "22181:2181"
 
   kafka:
-    image: wurstmeister/kafka:latest
-    environment:
-      KAFKA_LISTENERS: INSIDE://0.0.0.0:9097,OUTSIDE://0.0.0.0:9098
-      KAFKA_LISTENER_SECURITY_PROTOCOL: PLAINTEXT
-      KAFKA_LISTENER_SECURITY_PROTOCOL_INTERNAL: PLAINTEXT
-      KAFKA_LISTENER_SECURITY_PROTOCOL_OUTSIDE: PLAINTEXT
-      KAFKA_ADVERTISED_LISTENERS: INSIDE://kafka:9097,OUTSIDE://localhost:9098
-      KAFKA_LISTENER_NAMES: INSIDE,OUTSIDE
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2182
-      KAFKA_BROKER_ID: 1
-      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    image: wurstmeister/kafka
+    container_name: kafka
+    platform: linux/amd64
     ports:
-      - "9097:9097"
-      - "9098:9098"
-    networks:
-      - kafka_network
+      - "9093:9093"  # Exposing Kafka to the host
+    environment:
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181  # Connecting Kafka to Zookeeper
+      KAFKA_LISTENERS: INSIDE://:9092,OUTSIDE://:9093
+      KAFKA_ADVERTISED_LISTENERS: INSIDE://kafka:9092,OUTSIDE://host.docker.internal:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INSIDE:PLAINTEXT,OUTSIDE:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INSIDE
     depends_on:
       - zookeeper
 
-networks:
-  kafka_network:
-    driver: bridge
+  producer:
+    build: ../kafka-backend/producer
+    container_name: kafka-producer
+    platform: linux/amd64
+    volumes:
+      - ../kafka-backend/producer:/app
+    environment:
+      KAFKA_BROKER: kafka:9092  # Producer connects to Kafka inside Docker
+    depends_on:
+      - kafka
+
+  consumer:
+    build: ../kafka-backend/consumer
+    container_name: kafka-consumer
+    platform: linux/amd64
+    volumes:
+      - ../kafka-backend/consumer:/app
+    environment:
+      KAFKA_BROKER: kafka:9092  # Consumer connects to Kafka inside Docker
+    depends_on:
+      - kafka
+
+  websocket-server:
+    build: ../kafka-backend/websocket
+    container_name: websocket-server
+    platform: linux/amd64
+    volumes:
+      - ../kafka-backend/producer:/app/producer
+      - ../kafka-backend/consumer:/app/consumer
+      - ./websocket.js:/app/websocket
+    ports:
+      - "5000:5000"   # Exposing WebSocket server to the host
+    environment:
+      KAFKA_BROKER: kafka:9092  # WebSocket server connects to Kafka
+    depends_on:
+      - kafka
+      - consumer
+      - producer
+
+  frontend:
+    build: ../weather-frontend
+    container_name: weather-frontend
+    platform: linux/amd64
+    ports:
+      - "3000:3000"   # Exposing the frontend
+    environment:
+      REACT_APP_WEBSOCKET_URL: ws://websocket-server:5000   # Frontend connects to WebSocket server
+    depends_on:
+      - websocket-server
