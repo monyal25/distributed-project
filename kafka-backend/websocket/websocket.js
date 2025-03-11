@@ -1,69 +1,109 @@
-const WebSocket = require('ws');
-const { sendWeatherAlert } = require('./producer/producer');  // Kafka producer
-const { consumeWeatherAlerts } = require('./consumer/consumer');  // Kafka consumer
+const WebSocket = require("ws");
+const { sendWeatherAlert } = require("../producer/producer"); // Kafka producer
+const { consumeWeatherAlerts } = require("../consumer/consumer"); // Kafka consumer
 
-// CORS settings: allow connections only from specific origin
-const allowedOrigins = ['http://localhost:3000']; // Your React app URL
+// Allowed origins for WebSocket connections
+const allowedOrigins = ["http://localhost:3000", "http://127.0.0.1:3000"];
 
-// Create a new WebSocket server on port 3001
 const webSocket = new WebSocket.Server({
+  host: "0.0.0.0",
   port: 5000,
   verifyClient: (info, done) => {
-    const origin = info.origin;
-    if (allowedOrigins.includes(origin)) {
-      done(true);  // Accept connection
+    const origin = info.origin || "";
+    if (!origin || allowedOrigins.includes(origin)) {
+      done(true); // Accept connection
     } else {
-      console.log('Connection from origin not allowed:', origin);
-      done(false);  // Reject connection
+      console.log("Connection from origin not allowed:", origin);
+      done(false); // Reject connection
     }
-  }
+  },
 });
 
-webSocket.on('connection', (ws) => {
-  console.log('New WebSocket connection');
+const clients = new Map(); // Store active client subscriptions
 
-  // Handle the subscription messages from the client
-  ws.on('message', (message) => {
+webSocket.on("connection", (ws) => {
+  console.log("New WebSocket connection");
+
+  ws.on("message", (message) => {
     try {
       const { subscribe, location } = JSON.parse(message);
-      
+
       if (subscribe && location) {
         console.log(`User subscribed to: ${location}`);
-        
-        // Inform the client that they are subscribed
+
+        // Store subscription details
+        if (!clients.has(location)) {
+          clients.set(location, new Set());
+        }
+        clients.get(location).add(ws);
+
         ws.send(JSON.stringify({ message: `Subscribed to weather alerts for ${location}` }));
-        
-        // Start consuming weather alerts for the specific location
-        consumeWeatherAlerts(location, ws);
+
+        // Start consuming weather alerts for this location
+        consumeWeatherAlerts(location, (alertMessage) => {
+          sendToSubscribers(location, alertMessage);
+        });
       } else {
-        console.log('Invalid subscription message received.');
-        ws.send(JSON.stringify({ error: 'Invalid subscription message' }));
+        console.log("Invalid subscription message received.");
+        ws.send(JSON.stringify({ error: "Invalid subscription message" }));
       }
     } catch (error) {
-      console.error('Error processing message:', error);
-      ws.send(JSON.stringify({ error: 'Failed to process message' }));
+      console.error("Error processing message:", error);
+      ws.send(JSON.stringify({ error: "Failed to process message" }));
     }
   });
 
-  // Handle WebSocket closure
-  ws.on('close', () => {
-    console.log('WebSocket connection closed');
+  ws.on("close", () => {
+    console.log("WebSocket connection closed");
+    removeClient(ws);
   });
 
-  // Handle WebSocket errors
-  ws.on('error', (error) => {
-    console.error('WebSocket error:', error);
+  ws.on("error", (error) => {
+    console.error("WebSocket error:", error);
+    removeClient(ws);
   });
 });
 
-// Simulate sending weather alerts for "LosAngeles" and potentially other locations
-setInterval(() => {
-  try {
-    sendWeatherAlert('LosAngeles', 'Severe weather alert for Los Angeles!');
-    // Add other cities based on active subscriptions if needed
-  } catch (error) {
-    console.error('Error sending weather alert:', error);
+// Function to send messages only to active subscribers
+const sendToSubscribers = (location, message) => {
+  if (clients.has(location)) {
+    clients.get(location).forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        // ✅ Forward the Kafka message **without altering the structure**
+        client.send(JSON.stringify({
+          location: location,
+          message: {
+            eventType: message.eventType || "Unknown",
+            description: message.description || "No description available.",
+            startDate: message.startDate || "N/A",
+            url: message.url || "#"
+          }
+        }));
+      }
+    });
   }
-}, 5000);  // Send alerts every 5 seconds
+};
 
-console.log('WebSocket server is running on ws://localhost:5000/');
+
+// Function to remove a disconnected client
+const removeClient = (ws) => {
+  clients.forEach((subscribers, location) => {
+    if (subscribers.has(ws)) {
+      subscribers.delete(ws);
+      if (subscribers.size === 0) {
+        clients.delete(location);
+      }
+    }
+  });
+};
+
+// Simulate sending weather alerts (only if someone is subscribed)
+setInterval(() => {
+  clients.forEach((subscribers, location) => {
+    if (subscribers.size > 0) {
+      sendWeatherAlert(location, `Severe weather alert for ${location}!`);
+    }
+  });
+}, 5000);
+
+console.log("WebSocket server is running on ws://localhost:5000/");

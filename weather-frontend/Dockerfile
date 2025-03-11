@@ -1,8 +1,18 @@
-FROM node:18
+# Dockerfile for frontend
+FROM node:18-alpine
+
 WORKDIR /app
-COPY package.json package-lock.json ./
+
+COPY package*.json ./
+
 RUN npm install
+
 COPY . .
+
+# Add environment variable inside Docker container
+ARG REACT_APP_WEBSOCKET_URL
+ENV REACT_APP_WEBSOCKET_URL=${REACT_APP_WEBSOCKET_URL}
+
 RUN npm run build
-EXPOSE 3000
+
 CMD ["npm", "start"]
